@@ -12,6 +12,16 @@ This crate only supports the `v1.1.0` of OpenSSL
 
 Building will result in a `PIC` OpenSSL binary **ALWAYS** being linked in your application.
 
+Tools that are required
+
+* `rustc` (stable)
+* `cargo`
+* `git`
+* `gcc` (openssl needs this)
+* `perl` (v5.5 or greater, openssl needs this)
+* `binutils` (v2.2 or greater, openssl needs this)
+* `make` (idk version restrictions)
+
 ### Linux
 
 Linux is the only supported OS
