@@ -1,4 +1,3 @@
-extern crate pkg_config;
 #[cfg(target_env = "msvc")]
 extern crate vcpkg;
 extern crate cc;
@@ -50,11 +49,71 @@ fn env(name: &str) -> Option<OsString> {
 }
 
 fn main() {
+
+    let current_dir = env::current_dir().expect("Could not fetch current dir");
+    let openssl_dir = {
+        let mut x = current_dir.clone();
+        x.push("openssl");
+        x
+    };
+    let lib_path = {
+        let mut x = current_dir.clone();
+        x.push("openssl");
+        x
+    };
+    let include_path = {
+        let mut x = current_dir.clone();
+        x.push("openssl");
+        x.push("include");
+        x
+    };
+
+    //configure the system
+    match ::std::process::Command::new("perl")
+        .current_dir(&openssl_dir)
+        .arg("Configure")
+        .arg("enable-ec_nistp_64_gcc_128")
+        .arg("no-shared")
+        .arg("--api=1.1.0")
+        .arg("-fPIC")
+        .arg("linux-x86_64")
+        .status() {
+        Ok(status) => {
+            if ! status.success() {
+                panic!("Configuring openssl failed. {:?}", status.code());
+            }
+        }
+        Err(e) => panic!("Configuring openssl failed. {:?}", e)
+    };
+
+    //build the binary
+    match ::std::process::Command::new("make")
+        .current_dir(&openssl_dir)
+        .status() {
+        Ok(status) => {
+            if ! status.success() {
+                panic!("Build of openssl failed. {:?}", status.code());
+            }
+        }
+        Err(e) => panic!("Build of openssl failed. {:?}", e)
+    };
+
     let target = env::var("TARGET").unwrap();
 
-    let lib_dir = env("OPENSSL_LIB_DIR").map(PathBuf::from);
-    let include_dir = env("OPENSSL_INCLUDE_DIR").map(PathBuf::from);
+    //hard link libs
+    println!("cargo:rustc-link-search=native={}",openssl_dir.to_string_lossy());
+    println!("cargo:rustc-link-lib=static=ssl");
+    println!("cargo:rustc-link-lib=static=crypto");
+        println!("cargo:rustc-cfg=ossl110");
+        println!("cargo:rustc-cfg=ossl110f");
+        println!("cargo:version=110");
+        println!("cargo:patch=f");
 
+    let lib_dir = lib_path;
+    let include_dir = include_path;
+
+    /*
+    let include_dir = env("OPENSSL_INCLUDE_DIR").map(PathBuf::from);
     let (lib_dir, include_dir) = if lib_dir.is_none() || include_dir.is_none() {
         let openssl_dir = env("OPENSSL_DIR").unwrap_or_else(|| find_openssl_dir(&target));
         let openssl_dir = Path::new(&openssl_dir);
@@ -64,6 +123,7 @@ fn main() {
     } else {
         (lib_dir.unwrap(), include_dir.unwrap())
     };
+    */
 
     if !Path::new(&lib_dir).exists() {
         panic!(
@@ -84,7 +144,8 @@ fn main() {
     );
     println!("cargo:include={}", include_dir.to_string_lossy());
 
-    let version = validate_headers(&[include_dir.clone().into()]);
+    /*
+    //let version = validate_headers(&[include_dir.clone().into()]);
 
     let libs_env = env("OPENSSL_LIBS");
     let libs = match libs_env.as_ref().and_then(|s| s.to_str()) {
@@ -99,11 +160,11 @@ fn main() {
         }
     };
 
-
     let kind = determine_mode(Path::new(&lib_dir), &libs);
     for lib in libs.into_iter() {
         println!("cargo:rustc-link-lib={}={}", kind, lib);
     }
+    */
 }
 
 fn find_openssl_dir(target: &str) -> OsString {
@@ -119,9 +180,6 @@ fn find_openssl_dir(target: &str) -> OsString {
             return homebrew.to_path_buf().into();
         }
     }
-
-    try_pkg_config();
-    try_vcpkg();
 
     let mut msg = format!(
         "
@@ -209,87 +267,6 @@ OpenSSL:
 
     panic!(msg);
 }
-
-/// Attempt to find OpenSSL through pkg-config.
-///
-/// Note that if this succeeds then the function does not return as pkg-config
-/// typically tells us all the information that we need.
-fn try_pkg_config() {
-    let target = env::var("TARGET").unwrap();
-    let host = env::var("HOST").unwrap();
-
-    // If we're going to windows-gnu we can use pkg-config, but only so long as
-    // we're coming from a windows host.
-    //
-    // Otherwise if we're going to windows we probably can't use pkg-config.
-    if target.contains("windows-gnu") && host.contains("windows") {
-        env::set_var("PKG_CONFIG_ALLOW_CROSS", "1");
-    } else if target.contains("windows") {
-        return;
-    }
-
-    let lib = match pkg_config::Config::new().print_system_libs(false).find(
-        "openssl",
-    ) {
-        Ok(lib) => lib,
-        Err(e) => {
-            println!("run pkg_config fail: {:?}", e);
-            return;
-        }
-    };
-
-    validate_headers(&lib.include_paths);
-
-    for include in lib.include_paths.iter() {
-        println!("cargo:include={}", include.display());
-    }
-
-    std::process::exit(0);
-}
-
-/// Attempt to find OpenSSL through vcpkg.
-///
-/// Note that if this succeeds then the function does not return as vcpkg
-/// should emit all of the cargo metadata that we need.
-#[cfg(target_env = "msvc")]
-fn try_vcpkg() {
-
-    // vcpkg will not emit any metadata if it can not find libraries
-    // appropriate for the target triple with the desired linkage.
-
-    let mut lib = vcpkg::Config::new()
-        .emit_includes(true)
-        .lib_name("libcrypto")
-        .lib_name("libssl")
-        .probe("openssl");
-
-    if let Err(e) = lib {
-        println!("note: vcpkg did not find openssl as libcrypto and libssl : {:?}",
-                 e);
-        lib = vcpkg::Config::new()
-            .emit_includes(true)
-            .lib_name("libeay32")
-            .lib_name("ssleay32")
-            .probe("openssl");
-    }
-    if let Err(e) = lib {
-        println!("note: vcpkg did not find openssl as ssleay32 and libeay32: {:?}",
-                 e);
-        return;
-    }
-
-    let lib = lib.unwrap();
-    validate_headers(&lib.include_paths);
-
-    println!("cargo:rustc-link-lib=user32");
-    println!("cargo:rustc-link-lib=gdi32");
-    println!("cargo:rustc-link-lib=crypt32");
-
-    std::process::exit(0);
-}
-
-#[cfg(not(target_env = "msvc"))]
-fn try_vcpkg() {}
 
 /// Validates the header files found in `include_dir` and then returns the
 /// version string of OpenSSL.

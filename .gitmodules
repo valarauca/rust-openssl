@@ -1,0 +1,3 @@
+[submodule "openssl-sys/openssl"]
+	path = openssl-sys/openssl
+	url = https://github.com/openssl/openssl
