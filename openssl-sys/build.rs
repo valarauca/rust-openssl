@@ -72,11 +72,14 @@ fn main() {
     match ::std::process::Command::new("perl")
         .current_dir(&openssl_dir)
         .arg("Configure")
+        .arg("--prefix=/etc")
+        .arg("--openssldir=/etc")
         .arg("enable-ec_nistp_64_gcc_128")
         .arg("no-shared")
         .arg("--api=1.1.0")
         .arg("-fPIC")
         .arg("linux-x86_64")
+        .arg("--release")
         .status() {
         Ok(status) => {
             if ! status.success() {
